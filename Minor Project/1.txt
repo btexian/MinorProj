@@ -1,0 +1,2030 @@
+/*
+  .card {
+    margin: 30px auto;
+    width: 300px;
+    height: 300px;
+    border-radius: 40px;
+    background-image: url('https://i.redd.it/b3esnz5ra34y.jpg');
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-repeat: no-repeat;
+  box-shadow: 5px 5px 30px 7px rgba(0,0,0,0.25), -5px -5px 30px 7px rgba(0,0,0,0.22);
+    transition: 0.4s;
+  }
+  */
+
+
+      <!-- <div class="card 2">
+          <div class="card_image">
+            <img src="https://cdn.blackmilkclothing.com/media/wysiwyg/Wallpapers/PhoneWallpapers_FloralCoral.jpg" />
+            </div>
+          <div class="card_title title-white">
+            <p>Card Title</p>
+            <a href="#" class="btn btn-primary">Piano</a>
+          </div>
+        </div>
+        
+        <div class="card 3">
+          <div class="card_image"> -->
+            <!-- <img src="https://media.giphy.com/media/10SvWCbt1ytWCc/giphy.gif" /> -->
+          <!-- </div>
+          <div class="card_title">
+            <p>Card Title</p>
+            <a href="#" class="btn btn-primary">Ukulele</a>
+          </div>
+        </div> -->
+          
+          <!-- <div class="card 4">
+          <div class="card_image">
+            <img src="https://media.giphy.com/media/LwIyvaNcnzsD6/giphy.gif" /> -->
+            <!-- </div>
+          <div class="card_title title-black">
+            <p>Card Title</p>
+          </div>
+          </div>
+        
+        </div> -->
+
+
+
+
+
+
+
+
+        <html>
+<head>
+<script>
+// Define the set of test frequencies that we'll use to analyze microphone data.
+var C2 = 65.41; // C2 note, in Hz.
+var notes = [ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" ];
+var test_frequencies = [];
+for (var i = 0; i < 30; i++)
+{
+	var note_frequency = C2 * Math.pow(2, i / 12);
+	var note_name = notes[i % 12];
+	var note = { "frequency": note_frequency, "name": note_name };
+	var just_above = { "frequency": note_frequency * Math.pow(2, 1 / 48), "name": note_name + " (a bit sharp)" };
+	var just_below = { "frequency": note_frequency * Math.pow(2, -1 / 48), "name": note_name + " (a bit flat)" };
+	test_frequencies = test_frequencies.concat([ just_below, note, just_above ]);
+}
+
+window.addEventListener("load", initialize);
+
+var correlation_worker = new Worker("correlation_worker.js");
+correlation_worker.addEventListener("message", interpret_correlation_result);
+
+function initialize()
+{
+	var get_user_media = navigator.getUserMedia;
+	get_user_media = get_user_media || navigator.webkitGetUserMedia;
+	get_user_media = get_user_media || navigator.mozGetUserMedia;
+	get_user_media.call(navigator, { "audio": true }, use_stream, function() {});
+
+	document.getElementById("play-note").addEventListener("click", toggle_playing_note);
+}
+
+function use_stream(stream)
+{
+	var audio_context = new AudioContext();
+	var microphone = audio_context.createMediaStreamSource(stream);
+	window.source = microphone; // Workaround for https://bugzilla.mozilla.org/show_bug.cgi?id=934512
+	var script_processor = audio_context.createScriptProcessor(1024, 1, 1);
+
+	script_processor.connect(audio_context.destination);
+	microphone.connect(script_processor);
+
+	var buffer = [];
+	var sample_length_milliseconds = 100;
+	var recording = true;
+
+	// Need to leak this function into the global namespace so it doesn't get
+	// prematurely garbage-collected.
+	// http://lists.w3.org/Archives/Public/public-audio/2013JanMar/0304.html
+	window.capture_audio = function(event)
+	{
+		if (!recording)
+			return;
+
+		buffer = buffer.concat(Array.prototype.slice.call(event.inputBuffer.getChannelData(0)));
+
+		// Stop recording after sample_length_milliseconds.
+		if (buffer.length > sample_length_milliseconds * audio_context.sampleRate / 1000)
+		{
+			recording = false;
+
+			correlation_worker.postMessage
+			(
+				{
+					"timeseries": buffer,
+					"test_frequencies": test_frequencies,
+					"sample_rate": audio_context.sampleRate
+				}
+			);
+
+			buffer = [];
+			setTimeout(function() { recording = true; }, 250);
+		}
+	};
+
+	script_processor.onaudioprocess = window.capture_audio;
+}
+
+function interpret_correlation_result(event)
+{
+	var timeseries = event.data.timeseries;
+	var frequency_amplitudes = event.data.frequency_amplitudes;
+
+	// Compute the (squared) magnitudes of the complex amplitudes for each
+	// test frequency.
+	var magnitudes = frequency_amplitudes.map(function(z) { return z[0] * z[0] + z[1] * z[1]; });
+
+	// Find the maximum in the list of magnitudes.
+	var maximum_index = -1;
+	var maximum_magnitude = 0;
+	for (var i = 0; i < magnitudes.length; i++)
+	{
+		if (magnitudes[i] <= maximum_magnitude)
+			continue;
+
+		maximum_index = i;
+		maximum_magnitude = magnitudes[i];
+	}
+
+	// Compute the average magnitude. We'll only pay attention to frequencies
+	// with magnitudes significantly above average.
+	var average = magnitudes.reduce(function(a, b) { return a + b; }, 0) / magnitudes.length;
+	var confidence = maximum_magnitude / average;
+	var confidence_threshold = 10; // empirical, arbitrary.
+	if (confidence > confidence_threshold)
+	{
+		var dominant_frequency = test_frequencies[maximum_index];
+		document.getElementById("note-name").textContent = dominant_frequency.name;
+		document.getElementById("frequency").textContent = dominant_frequency.frequency;
+	}
+}
+
+// Unnecessary addition of button to play an E note.
+var note_context = new AudioContext();
+var note_node = note_context.createOscillator();
+var gain_node = note_context.createGain();
+note_node.frequency = C2 * Math.pow(2, 4 / 12); // E, ~82.41 Hz.
+gain_node.gain.value = 0;
+note_node.connect(gain_node);
+gain_node.connect(note_context.destination);
+note_node.start();
+
+var playing = false;
+function toggle_playing_note()
+{
+	playing = !playing;
+	if (playing)
+		gain_node.gain.value = 0.1;
+	else
+		gain_node.gain.value = 0;
+}
+</script>
+</head>
+
+<body>
+<p>It sounds like you're playing...</p>
+<h1 id="note-name"></h1>
+<p>
+	<span>frequency (Hz):</span>
+	<span id="frequency"></span>
+</p>
+<hr>
+<button id="play-note">start/stop an E note</button>
+<hr>
+<a href="https://github.com/jbergknoff/guitar-tuner">Source code</a> / <a href="http://jonathan.bergknoff.com/journal/making-a-guitar-tuner-html5">Explanatory article</a>
+</body>
+</html>
+
+ <script>
+        // Define the set of test frequencies that we'll use to analyze microphone data.
+        var C2 = 65.41; // C2 note, in Hz.
+        var notes = [ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" ];
+        var test_frequencies = [];
+        for (var i = 0; i < 30; i++)
+        {
+            var note_frequency = C2 * Math.pow(2, i / 12);
+            var note_name = notes[i % 12];
+            var note = { "frequency": note_frequency, "name": note_name };
+            var just_above = { "frequency": note_frequency * Math.pow(2, 1 / 48), "name": note_name + " (a bit sharp)" };
+            var just_below = { "frequency": note_frequency * Math.pow(2, -1 / 48), "name": note_name + " (a bit flat)" };
+            test_frequencies = test_frequencies.concat([ just_below, note, just_above ]);
+        }
+        
+        window.addEventListener("load", initialize);
+        
+        var correlation_worker = new Worker("correlation_worker.js");
+        correlation_worker.addEventListener("message", interpret_correlation_result);
+        
+        function initialize()
+        {
+            var get_user_media = navigator.getUserMedia;
+            get_user_media = get_user_media || navigator.webkitGetUserMedia;
+            get_user_media = get_user_media || navigator.mozGetUserMedia;
+            get_user_media.call(navigator, { "audio": true }, use_stream, function() {});
+        
+            document.getElementById("play-note").addEventListener("click", toggle_playing_note);
+        }
+        
+        function use_stream(stream)
+        {
+            var audio_context = new AudioContext();
+            var microphone = audio_context.createMediaStreamSource(stream);
+            window.source = microphone; // Workaround for https://bugzilla.mozilla.org/show_bug.cgi?id=934512
+            var script_processor = audio_context.createScriptProcessor(1024, 1, 1);
+        
+            script_processor.connect(audio_context.destination);
+            microphone.connect(script_processor);
+        
+            var buffer = [];
+            var sample_length_milliseconds = 100;
+            var recording = true;
+        
+            // Need to leak this function into the global namespace so it doesn't get
+            // prematurely garbage-collected.
+            // http://lists.w3.org/Archives/Public/public-audio/2013JanMar/0304.html
+            window.capture_audio = function(event)
+            {
+                if (!recording)
+                    return;
+        
+                buffer = buffer.concat(Array.prototype.slice.call(event.inputBuffer.getChannelData(0)));
+        
+                // Stop recording after sample_length_milliseconds.
+                if (buffer.length > sample_length_milliseconds * audio_context.sampleRate / 1000)
+                {
+                    recording = false;
+        
+                    correlation_worker.postMessage
+                    (
+                        {
+                            "timeseries": buffer,
+                            "test_frequencies": test_frequencies,
+                            "sample_rate": audio_context.sampleRate
+                        }
+                    );
+        
+                    buffer = [];
+                    setTimeout(function() { recording = true; }, 250);
+                }
+            };
+        
+            script_processor.onaudioprocess = window.capture_audio;
+        }
+        
+        function interpret_correlation_result(event)
+        {
+            var timeseries = event.data.timeseries;
+            var frequency_amplitudes = event.data.frequency_amplitudes;
+        
+            // Compute the (squared) magnitudes of the complex amplitudes for each
+            // test frequency.
+            var magnitudes = frequency_amplitudes.map(function(z) { return z[0] * z[0] + z[1] * z[1]; });
+        
+            // Find the maximum in the list of magnitudes.
+            var maximum_index = -1;
+            var maximum_magnitude = 0;
+            for (var i = 0; i < magnitudes.length; i++)
+            {
+                if (magnitudes[i] <= maximum_magnitude)
+                    continue;
+        
+                maximum_index = i;
+                maximum_magnitude = magnitudes[i];
+            }
+        
+            // Compute the average magnitude. We'll only pay attention to frequencies
+            // with magnitudes significantly above average.
+            var average = magnitudes.reduce(function(a, b) { return a + b; }, 0) / magnitudes.length;
+            var confidence = maximum_magnitude / average;
+            var confidence_threshold = 10; // empirical, arbitrary.
+            if (confidence > confidence_threshold)
+            {
+                var dominant_frequency = test_frequencies[maximum_index];
+                document.getElementById("note-name").textContent = dominant_frequency.name;
+                document.getElementById("frequency").textContent = dominant_frequency.frequency;
+            }
+        }
+        
+        // Unnecessary addition of button to play an E note.
+        var note_context = new AudioContext();
+        var note_node = note_context.createOscillator();
+        var gain_node = note_context.createGain();
+        note_node.frequency = C2 * Math.pow(2, 4 / 12); // E, ~82.41 Hz.
+        gain_node.gain.value = 0;
+        note_node.connect(gain_node);
+        gain_node.connect(note_context.destination);
+        note_node.start();
+        
+        var playing = false;
+        function toggle_playing_note()
+        {
+            playing = !playing;
+            if (playing)
+                gain_node.gain.value = 0.1;
+            else
+                gain_node.gain.value = 0;
+        }
+        </script>
+        </head>
+        
+        <body>
+        <p>It sounds like you're playing...</p>
+        <h1 id="note-name"></h1>
+        <p>
+            <span>frequency (Hz):</span>
+            <span id="frequency"></span>
+        </p>
+        <hr>
+        <button id="play-note">start/stop an E note</button>
+        <hr>
+        <a href="https://github.com/jbergknoff/guitar-tuner">Source code</a> / <a href="http://jonathan.bergknoff.com/journal/making-a-guitar-tuner-html5">Explanatory article</a>
+        </body>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.6.1 -->
+<title>Programming a Guitar Tuner with Python | chciken</title>
+<meta name="generator" content="Jekyll v3.8.6" />
+<meta property="og:title" content="Programming a Guitar Tuner with Python" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="This my website :)" />
+<meta property="og:description" content="This my website :)" />
+<link rel="canonical" href="https://chciken.com/digital/signal/processing/2020/05/13/guitar-tuner.html" />
+<meta property="og:url" content="https://chciken.com/digital/signal/processing/2020/05/13/guitar-tuner.html" />
+<meta property="og:site_name" content="chciken" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2020-05-13T11:55:44+02:00" />
+<script type="application/ld+json">
+{"mainEntityOfPage":{"@type":"WebPage","@id":"https://chciken.com/digital/signal/processing/2020/05/13/guitar-tuner.html"},"@type":"BlogPosting","url":"https://chciken.com/digital/signal/processing/2020/05/13/guitar-tuner.html","headline":"Programming a Guitar Tuner with Python","dateModified":"2020-05-13T11:55:44+02:00","datePublished":"2020-05-13T11:55:44+02:00","description":"This my website :)","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://chciken.com/feed.xml" title="chciken" /></head>
+<body><header class="site-header" role="banner">
+
+  <div class="wrapper"><a class="site-title" rel="author" href="/">chciken</a><nav class="site-nav">
+        <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+        <label for="nav-trigger">
+          <span class="menu-icon">
+            <svg viewBox="0 0 18 15" width="18px" height="15px">
+              <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+            </svg>
+          </span>
+        </label>
+
+        <div class="trigger"><a class="page-link" href="/about/">About</a></div>
+      </nav></div>
+</header>
+<main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <article class="post h-entry" itemscope itemtype="http://schema.org/BlogPosting">
+
+  <header class="post-header">
+    <h1 class="post-title p-name" itemprop="name headline">Programming a Guitar Tuner with Python</h1>
+    <p class="post-meta">
+      <time class="dt-published" datetime="2020-05-13T11:55:44+02:00" itemprop="datePublished">May 13, 2020
+      </time></p>
+  </header>
+
+  <div class="post-content e-content" itemprop="articleBody">
+    <style type="text/css">
+  /* Tooltip container */
+  .tooltip {
+    position: relative;
+    display: inline-block;
+  }
+
+  /* Tooltip text */
+  .tooltip .tooltiptext {
+    visibility: hidden;
+    width: 300px;
+    background-color: grey;
+    color: #fff;
+    text-align: center;
+    padding: 10px;
+    border-radius: 6px;
+    position: absolute;
+    z-index: 1;
+  }
+
+  /* Show the tooltip text when you mouse over the tooltip container */
+  .tooltip:hover .tooltiptext {
+    visibility: visible;
+  }
+
+  .left-align{
+    text-align: left!important;
+  }
+
+  .center {
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 2%;
+    margin-top: 2%;
+  }
+
+  .accordion {
+    background-color: #eee;
+    color: #444;
+    cursor: pointer;
+    padding: 18px;
+    width: 100%;
+    border: none;
+    text-align: left;
+    outline: none;
+    font-size: 15px;
+    transition: 0.4s;
+    margin-top: 20px;
+  }
+
+  .active, .accordion:hover {
+    background-color: #ccc;
+  }
+
+  .panel {
+    padding: 0 18px;
+    display: none;
+    background-color: #ccc;
+    overflow: hidden;
+  }
+
+  .slidecontainer {
+    text-align: center;
+    margin-top: 20px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 80%;
+  }
+
+  .slider {
+    -webkit-appearance: none;
+    width: 50%;
+    height: 10px;
+    border-radius: 5px;
+    background: #d3d3d3;
+    outline: none;
+    opacity: 0.7;
+    -webkit-transition: .2s;
+    transition: opacity .2s;
+  }
+
+  .slider:hover {
+    opacity: 1;
+  }
+
+  .slider::-moz-range-thumb {
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    background: #338CFF;
+    cursor: pointer;
+  }
+
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #338CFF;
+    cursor: pointer;
+  }
+
+  #scene3d {
+    width: 300px;
+    height: 300px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  canvas {
+    width: 80%;
+    display: block;
+  }
+
+  li{
+    margin: 12px 0;
+  }
+
+  monospace {
+    font-family:'Lucida Console', monospace
+  }
+
+  #toc_container {
+    background: #f9f9f9 none repeat scroll 0 0;
+    border: 1px solid #aaa;
+    display: table;
+    margin-bottom: 1em;
+    padding: 20px;
+    width: auto;
+  }
+
+  .toc_title {
+      font-weight: 700;
+      text-align: center;
+  }
+
+  #toc_container li, #toc_container ul, #toc_container ul li{
+      list-style: outside none none !important;
+  }
+
+  /**
+ * Reset some basic elements
+ */
+body, h1, h2, h3, h4, h5, h6,
+p, blockquote, pre, hr,
+dl, dd, ol, ul, figure {
+  margin: 0;
+  padding: 0; }
+
+/**
+ * Basic styling
+ */
+body {
+  font: 400 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  color: #111;
+  background-color: #fdfdfd;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-feature-settings: "kern" 1;
+  -moz-font-feature-settings: "kern" 1;
+  -o-font-feature-settings: "kern" 1;
+  font-feature-settings: "kern" 1;
+  font-kerning: normal;
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column; }
+
+/**
+ * Set `margin-bottom` to maintain vertical rhythm
+ */
+h1, h2, h3, h4, h5, h6,
+p, blockquote, pre,
+ul, ol, dl, figure,
+.highlight {
+  margin-bottom: 15px; }
+
+/**
+ * `main` element
+ */
+main {
+  display: block;
+  /* Default value of `display` of `main` element is 'inline' in IE 11. */ }
+
+/**
+ * Images
+ */
+img {
+  max-width: 100%;
+  vertical-align: middle; }
+
+/**
+ * Figures
+ */
+figure > img {
+  display: block; }
+
+figcaption {
+  font-size: 14px; }
+
+/**
+ * Lists
+ */
+ul, ol {
+  margin-left: 30px; }
+
+li > ul,
+li > ol {
+  margin-bottom: 0; }
+
+/**
+ * Headings
+ */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 400; }
+
+/**
+ * Links
+ */
+a {
+  color: #2a7ae2;
+  text-decoration: none; }
+  a:visited {
+    color: #1756a9; }
+  a:hover {
+    color: #111;
+    text-decoration: underline; }
+  .social-media-list a:hover {
+    text-decoration: none; }
+    .social-media-list a:hover .username {
+      text-decoration: underline; }
+
+/**
+ * Blockquotes
+ */
+blockquote {
+  color: #828282;
+  border-left: 4px solid #e8e8e8;
+  padding-left: 15px;
+  font-size: 18px;
+  letter-spacing: -1px;
+  font-style: italic; }
+  blockquote > :last-child {
+    margin-bottom: 0; }
+
+/**
+ * Code formatting
+ */
+pre,
+code {
+  font-size: 15px;
+  border: 1px solid #e8e8e8;
+  border-radius: 3px;
+  background-color: #eef; }
+
+code {
+  padding: 1px 5px; }
+
+pre {
+  padding: 8px 12px;
+  overflow-x: auto; }
+  pre > code {
+    border: 0;
+    padding-right: 0;
+    padding-left: 0; }
+
+/**
+ * Wrapper
+ */
+.wrapper {
+  max-width: -webkit-calc(800px - (30px * 2));
+  max-width: calc(800px - (30px * 2));
+  margin-right: auto;
+  margin-left: auto;
+  padding-right: 30px;
+  padding-left: 30px; }
+  @media screen and (max-width: 800px) {
+    .wrapper {
+      max-width: -webkit-calc(800px - (30px));
+      max-width: calc(800px - (30px));
+      padding-right: 15px;
+      padding-left: 15px; } }
+
+/**
+ * Clearfix
+ */
+.wrapper:after, .footer-col-wrapper:after {
+  content: "";
+  display: table;
+  clear: both; }
+
+/**
+ * Icons
+ */
+.svg-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  fill: #828282;
+  padding-right: 5px;
+  vertical-align: text-top; }
+
+.social-media-list li + li {
+  padding-top: 5px; }
+
+/**
+ * Tables
+ */
+table {
+  margin-bottom: 30px;
+  width: 100%;
+  text-align: left;
+  color: #3f3f3f;
+  border-collapse: collapse;
+  border: 1px solid #e8e8e8; }
+  table tr:nth-child(even) {
+    background-color: #f7f7f7; }
+  table th, table td {
+    padding: 10px 15px; }
+  table th {
+    background-color: #f0f0f0;
+    border: 1px solid #dedede;
+    border-bottom-color: #c9c9c9; }
+  table td {
+    border: 1px solid #e8e8e8; }
+
+/**
+ * Site header
+ */
+.site-header {
+  border-top: 5px solid #424242;
+  border-bottom: 1px solid #e8e8e8;
+  min-height: 55.95px;
+  position: relative; }
+
+.site-title {
+  font-size: 26px;
+  font-weight: 300;
+  line-height: 54px;
+  letter-spacing: -1px;
+  margin-bottom: 0;
+  float: left; }
+  .site-title, .site-title:visited {
+    color: #424242; }
+
+.site-nav {
+  float: right;
+  line-height: 54px; }
+  .site-nav .nav-trigger {
+    display: none; }
+  .site-nav .menu-icon {
+    display: none; }
+  .site-nav .page-link {
+    color: #111;
+    line-height: 1.5; }
+    .site-nav .page-link:not(:last-child) {
+      margin-right: 20px; }
+  @media screen and (max-width: 600px) {
+    .site-nav {
+      position: absolute;
+      top: 9px;
+      right: 15px;
+      background-color: #fdfdfd;
+      border: 1px solid #e8e8e8;
+      border-radius: 5px;
+      text-align: right; }
+      .site-nav label[for="nav-trigger"] {
+        display: block;
+        float: right;
+        width: 36px;
+        height: 36px;
+        z-index: 2;
+        cursor: pointer; }
+      .site-nav .menu-icon {
+        display: block;
+        float: right;
+        width: 36px;
+        height: 26px;
+        line-height: 0;
+        padding-top: 10px;
+        text-align: center; }
+        .site-nav .menu-icon > svg {
+          fill: #424242; }
+      .site-nav input ~ .trigger {
+        clear: both;
+        display: none; }
+      .site-nav input:checked ~ .trigger {
+        display: block;
+        padding-bottom: 5px; }
+      .site-nav .page-link {
+        display: block;
+        padding: 5px 10px;
+        margin-left: 20px; }
+        .site-nav .page-link:not(:last-child) {
+          margin-right: 0; } }
+
+/**
+ * Site footer
+ */
+.site-footer {
+  border-top: 1px solid #e8e8e8;
+  padding: 30px 0; }
+
+.footer-heading {
+  font-size: 18px;
+  margin-bottom: 15px; }
+
+.contact-list,
+.social-media-list {
+  list-style: none;
+  margin-left: 0; }
+
+.footer-col-wrapper {
+  font-size: 15px;
+  color: #828282;
+  margin-left: -15px; }
+
+.footer-col {
+  float: left;
+  margin-bottom: 15px;
+  padding-left: 15px; }
+
+.footer-col-1 {
+  width: -webkit-calc(35% - (30px / 2));
+  width: calc(35% - (30px / 2)); }
+
+.footer-col-2 {
+  width: -webkit-calc(20% - (30px / 2));
+  width: calc(20% - (30px / 2)); }
+
+.footer-col-3 {
+  width: -webkit-calc(45% - (30px / 2));
+  width: calc(45% - (30px / 2)); }
+
+@media screen and (max-width: 800px) {
+  .footer-col-1,
+  .footer-col-2 {
+    width: -webkit-calc(50% - (30px / 2));
+    width: calc(50% - (30px / 2)); }
+
+  .footer-col-3 {
+    width: -webkit-calc(100% - (30px / 2));
+    width: calc(100% - (30px / 2)); } }
+@media screen and (max-width: 600px) {
+  .footer-col {
+    float: none;
+    width: -webkit-calc(100% - (30px / 2));
+    width: calc(100% - (30px / 2)); } }
+/**
+ * Page content
+ */
+.page-content {
+  padding: 30px 0;
+  flex: 1; }
+
+.page-heading {
+  font-size: 32px; }
+
+.post-list-heading {
+  font-size: 28px; }
+
+.post-list {
+  margin-left: 0;
+  list-style: none; }
+  .post-list > li {
+    margin-bottom: 30px; }
+
+.post-meta {
+  font-size: 14px;
+  color: #828282; }
+
+.post-link {
+  display: block;
+  font-size: 24px; }
+
+/**
+ * Posts
+ */
+.post-header {
+  margin-bottom: 30px; }
+
+.post-title {
+  font-size: 42px;
+  letter-spacing: -1px;
+  line-height: 1; }
+  @media screen and (max-width: 800px) {
+    .post-title {
+      font-size: 36px; } }
+
+.post-content {
+  margin-bottom: 30px; }
+  .post-content h2 {
+    font-size: 32px; }
+    @media screen and (max-width: 800px) {
+      .post-content h2 {
+        font-size: 28px; } }
+  .post-content h3 {
+    font-size: 26px; }
+    @media screen and (max-width: 800px) {
+      .post-content h3 {
+        font-size: 22px; } }
+  .post-content h4 {
+    font-size: 20px; }
+    @media screen and (max-width: 800px) {
+      .post-content h4 {
+        font-size: 18px; } }
+
+/**
+ * Syntax highlighting styles
+ */
+.highlight {
+  background: #fff; }
+  .highlighter-rouge .highlight {
+    background: #eef; }
+  .highlight .c {
+    color: #998;
+    font-style: italic; }
+  .highlight .err {
+    color: #a61717;
+    background-color: #e3d2d2; }
+  .highlight .k {
+    font-weight: bold; }
+  .highlight .o {
+    font-weight: bold; }
+  .highlight .cm {
+    color: #998;
+    font-style: italic; }
+  .highlight .cp {
+    color: #999;
+    font-weight: bold; }
+  .highlight .c1 {
+    color: #998;
+    font-style: italic; }
+  .highlight .cs {
+    color: #999;
+    font-weight: bold;
+    font-style: italic; }
+  .highlight .gd {
+    color: #000;
+    background-color: #fdd; }
+  .highlight .gd .x {
+    color: #000;
+    background-color: #faa; }
+  .highlight .ge {
+    font-style: italic; }
+  .highlight .gr {
+    color: #a00; }
+  .highlight .gh {
+    color: #999; }
+  .highlight .gi {
+    color: #000;
+    background-color: #dfd; }
+  .highlight .gi .x {
+    color: #000;
+    background-color: #afa; }
+  .highlight .go {
+    color: #888; }
+  .highlight .gp {
+    color: #555; }
+  .highlight .gs {
+    font-weight: bold; }
+  .highlight .gu {
+    color: #aaa; }
+  .highlight .gt {
+    color: #a00; }
+  .highlight .kc {
+    font-weight: bold; }
+  .highlight .kd {
+    font-weight: bold; }
+  .highlight .kp {
+    font-weight: bold; }
+  .highlight .kr {
+    font-weight: bold; }
+  .highlight .kt {
+    color: #458;
+    font-weight: bold; }
+  .highlight .m {
+    color: #099; }
+  .highlight .s {
+    color: #d14; }
+  .highlight .na {
+    color: #008080; }
+  .highlight .nb {
+    color: #0086B3; }
+  .highlight .nc {
+    color: #458;
+    font-weight: bold; }
+  .highlight .no {
+    color: #008080; }
+  .highlight .ni {
+    color: #800080; }
+  .highlight .ne {
+    color: #900;
+    font-weight: bold; }
+  .highlight .nf {
+    color: #900;
+    font-weight: bold; }
+  .highlight .nn {
+    color: #555; }
+  .highlight .nt {
+    color: #000080; }
+  .highlight .nv {
+    color: #008080; }
+  .highlight .ow {
+    font-weight: bold; }
+  .highlight .w {
+    color: #bbb; }
+  .highlight .mf {
+    color: #099; }
+  .highlight .mh {
+    color: #099; }
+  .highlight .mi {
+    color: #099; }
+  .highlight .mo {
+    color: #099; }
+  .highlight .sb {
+    color: #d14; }
+  .highlight .sc {
+    color: #d14; }
+  .highlight .sd {
+    color: #d14; }
+  .highlight .s2 {
+    color: #d14; }
+  .highlight .se {
+    color: #d14; }
+  .highlight .sh {
+    color: #d14; }
+  .highlight .si {
+    color: #d14; }
+  .highlight .sx {
+    color: #d14; }
+  .highlight .sr {
+    color: #009926; }
+  .highlight .s1 {
+    color: #d14; }
+  .highlight .ss {
+    color: #990073; }
+  .highlight .bp {
+    color: #999; }
+  .highlight .vc {
+    color: #008080; }
+  .highlight .vg {
+    color: #008080; }
+  .highlight .vi {
+    color: #008080; }
+  .highlight .il {
+    color: #099; }
+
+</style>
+
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+<head><link rel="shortcut icon" href="/assets/favicon.ico"></head>
+
+<div id="toc_container">
+  <p class="toc_title">Contents</p>
+  <ul class="toc_list">
+  <li><a href="#intro">1. Introduction</a></li>
+  <li><a href="#guitarsnpitches">2. Guitars & Pitches</a></li>
+  <li><a href="#pitchdet">3. Pitch Detection</a>
+    <ul>
+      <li><a href="#hps">3.1 Simple DFT tuner</a></li>
+      <li><a href="#dft">3.2 HPS tuner</a></li>
+    </ul>
+  </li>
+  <li><a href="#summary">4. Summary</a></li>
+  <li><a href="#honor">5. Honorable Mentions</a></li>
+  </ul>
+</div>
+
+<h2 id="intro">1. Introduction</h2>
+<p>
+<p>
+Hello there! In this post we will program a guitar tuner with Python.
+This project is a pure software project, so there is no soldering or tinkering involved.
+You just need a computer with a microphone (or an audio interface) and Python.
+Of course the algorithms presented in the post are not bound to Python, so feel free to use any other language if you don't mind the addtional translation
+(however, I recommend to not use <a href="https://www.tcl.tk/about/" targe="_blank">tcl</a> as it is "the best-kept secret in the software industry" and we better keep it a secret, lol).
+</p>
+<p>
+We will start with analyzing the problem we have which is probably a detuned guitar and then forward to solving this problem using math and algorithms.
+The focus of this post lies on understanding the methods we use and what their pros and cons are.
+For those who want to code a guitar tuner in under 60 seconds: <a href="https://github.com/not-chciken/guitar_tuner/blob/master/hps_tuner.py">my Github repo</a> ;)
+</p>
+
+<h2 id="guitarsnpitches">2. Guitars & Pitches</h2>
+<p>
+Let's start with some really basic introduction to music theory and guitars.
+First, we have to define some important musical terms as an exact distinction will avoid some ambiguities:
+<ul>
+  <li>The <b>frequency</b> is defined as the reciprocal of the period duration of an repeating event.
+    For example, if we have a sinusoidal signal with a period length of 2ms, the frequency is 500Hz.
+  </li>
+  <li>
+    <b>Pitch</b> is the perceived frequency of a sound. Thus, in contrast to frequency which is physical measure, the pitch is a psychoacoustical measure.
+    This distinction is needed as there are cases where we hear frequencies which are physically not there (or don't hear frequencies which are actually there)!
+    Don't worry, we will have a closer look on that subject later.
+  </li>
+  <li>
+    A <b>note</b> is just a pitch with a name. For example, the well known A<sub>4</sub> is a pitch at 440Hz.
+    It can also carry temporal information like whole notes or half notes, but this is rather uninteresting for us.
+  </li>
+  <li>
+    The term <b>tone</b> seems to be ambigous, so we rather try to avoid it. The only kind of tone which will be used is a <b>pure tone</b>.
+    A pure tone is a sound with a sinusoidal waveform.
+  </li>
+</ul>
+(Sources: <a href="https://music.stackexchange.com/questions/3262/what-are-the-differences-between-tone-note-and-pitch" target="_blank">[1]</a>,
+<a href="https://en.wikipedia.org/wiki/Pitch_(music)" target="_blank">[2]</a>,
+<a href="https://en.wikipedia.org/wiki/Pure_tone" target="_blank">[3]</a>)
+</p>
+<p>
+With this defintions in mind we will now look at how a guitar works on a musical level.
+I guess most of you know this but the "default" guitar has 6 strings which are usually tuned in the standard tuning <i>EADGBE</i>.
+Whereby each note refers to one of the strings. For example, the lowest string is tuned to the note E<sub>2</sub>.
+This means that the string has a pitch of 82.41Hz, since this is how the tone E<sub>2</sub> is defined.
+If it would have a pitch of 81Hz, our guitar is out-of-tune and we have to use the tuners on the headstock to get it back in tune.
+Of course all other notes can be assigned to a certain pitch as well:
+</p>
+<p>
+<img class="center" width="70%" src="/assets/guitar_tuner/guitar_tuning.svg">
+</p>
+<p>
+Note, that for this post we assume an <a href="https://en.wikipedia.org/wiki/Equal_temperament" target="_blank">equal temperament</a>
+and a concert pitch of A<sub>4</sub>=440Hz which covers probably 99% of modern music.
+The cool thing about the equal temperament is that it defines the notes and pitches in half step fashion described by the following formula:
+$$f(i) = f_0 \cdot 2^{i/12} $$
+So, if you have a pitch \(f_0\), for example A<sub>4</sub> at 440Hz, and you want to increase it by one half step to an A#<sub>4</sub> then you have to multiply
+the pitch 440Hz with \(2^{1/12}\) resulting in 466.16Hz.<br>
+We can also derive an inverse formula which tells how many half steps are between the examined pitch \(f_i\) and a reference pitch \(f_o\).
+$$12 \cdot log_2 \left( \frac{f_i}{f_o} \right) = i $$
+This also allows us to assign a pitch a note. Or at least a note which is close to the pitch.
+As you can imagine, this formula will be of particular interest for us.
+Because if we can extract the pich from a guitar recoding, we want to know the closest note and how far away it is.
+</p>
+<p>
+This leads us to the following Python function <monospace>find_closest_note(pitch)</monospace>. If we give it a pitch in Hz, it will return
+the closest note and the corresponding pitch of the closest note.
+</p>
+<figure class="highlight"><pre><code class="language-python" data-lang="python"><span class="n">CONCERT_PITCH</span> <span class="o">=</span> <span class="mi">440</span>
+<span class="n">ALL_NOTES</span> <span class="o">=</span> <span class="p">[</span><span class="s">"A"</span><span class="p">,</span><span class="s">"A#"</span><span class="p">,</span><span class="s">"B"</span><span class="p">,</span><span class="s">"C"</span><span class="p">,</span><span class="s">"C#"</span><span class="p">,</span><span class="s">"D"</span><span class="p">,</span><span class="s">"D#"</span><span class="p">,</span><span class="s">"E"</span><span class="p">,</span><span class="s">"F"</span><span class="p">,</span><span class="s">"F#"</span><span class="p">,</span><span class="s">"G"</span><span class="p">,</span><span class="s">"G#"</span><span class="p">]</span>
+<span class="k">def</span> <span class="nf">find_closest_note</span><span class="p">(</span><span class="n">pitch</span><span class="p">):</span>
+  <span class="n">i</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="nb">round</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">pitch</span><span class="o">/</span><span class="n">CONCERT_PITCH</span><span class="p">)</span><span class="o">*</span><span class="mi">12</span><span class="p">))</span>
+  <span class="n">closest_note</span> <span class="o">=</span> <span class="n">ALL_NOTES</span><span class="p">[</span><span class="n">i</span><span class="o">%</span><span class="mi">12</span><span class="p">]</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="mi">4</span> <span class="o">+</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">9</span><span class="p">)</span> <span class="o">//</span> <span class="mi">12</span><span class="p">)</span>
+  <span class="n">closest_pitch</span> <span class="o">=</span> <span class="n">CONCERT_PITCH</span><span class="o">*</span><span class="mi">2</span><span class="o">**</span><span class="p">(</span><span class="n">i</span><span class="o">/</span><span class="mi">12</span><span class="p">)</span>
+  <span class="k">return</span> <span class="n">closest_note</span><span class="p">,</span> <span class="n">closest_pitch</span></code></pre></figure>
+<p>
+As next step we need to record the guitar and determine the pitch of the audio signal.
+This is easier said than done as you will see ;)
+</p>
+<h2 id="pitchdet">3. Pitch Detection</h2>
+<p>
+After reading the following section you hopefully know what is meant by pitch detection and which algorithms are suited for this.
+As already mentioned above, pitch and frequencies are not the same.
+This might sound abstract at first, so let's "look" at an example.
+</p>
+The example is a short recording of me playing the note A<sub>4</sub> with a pitch of 440Hz on a guitar.
+<audio controls class="center"> <source src="/assets/guitar_tuner/example1.mp3" type="audio/mp3"> Your browser does not support the audio element.</audio>
+<button class="accordion"><b>Code for recording</b></button>
+  <div class="panel">
+    <figure class="highlight"><pre><code class="language-python" data-lang="python"><span class="kn">import</span> <span class="nn">sounddevice</span> <span class="k">as</span> <span class="n">sd</span>
+<span class="kn">import</span> <span class="nn">scipy.io.wavfile</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="n">SAMPLE_FREQ</span> <span class="o">=</span> <span class="mi">44100</span> <span class="c1"># Sampling frequency of the recording
+</span><span class="n">SAMPLE_DUR</span> <span class="o">=</span> <span class="mi">2</span>  <span class="c1"># Duration of the recoding
+</span>
+<span class="k">print</span><span class="p">(</span><span class="s">"Grab your guitar!"</span><span class="p">)</span>
+<span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="c1"># Gives you a second to grab your guitar ;)
+</span>
+<span class="n">myRecording</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">rec</span><span class="p">(</span><span class="n">SAMPLE_DUR</span> <span class="o">*</span> <span class="n">SAMPLE_FREQ</span><span class="p">,</span> <span class="n">samplerate</span><span class="o">=</span><span class="n">SAMPLE_FREQ</span><span class="p">,</span> <span class="n">channels</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">dtype</span><span class="o">=</span><span class="s">'float64'</span><span class="p">)</span>
+<span class="k">print</span><span class="p">(</span><span class="s">"Recording audio"</span><span class="p">)</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>
+
+<span class="n">sd</span><span class="o">.</span><span class="n">play</span><span class="p">(</span><span class="n">myRecording</span><span class="p">,</span> <span class="n">SAMPLE_FREQ</span><span class="p">)</span>
+<span class="k">print</span><span class="p">(</span><span class="s">"Playing audio"</span><span class="p">)</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>
+
+<span class="n">scipy</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">wavfile</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">'example1.wav'</span><span class="p">,</span> <span class="n">SAMPLE_FREQ</span><span class="p">,</span> <span class="n">myRecording</span><span class="p">)</span>
+    </code></pre></figure>
+
+  </div>
+<br><br>
+<p>
+The same example but now visualized as a time/value graph looks like follows
+<img class="center" width="70%" src="/assets/guitar_tuner/example1.svg">
+</p>
+<button class="accordion"><b>Code for creating a signal/time plot</b></button>
+  <div class="panel">
+    <figure class="highlight"><pre><code class="language-python" data-lang="python"><span class="kn">import</span> <span class="nn">scipy.io.wavfile</span>
+<span class="kn">import</span> <span class="nn">matplotlib.pyplot</span> <span class="k">as</span> <span class="n">plt</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="n">np</span>
+
+<span class="n">sampleFreq</span><span class="p">,</span> <span class="n">myRecording</span> <span class="o">=</span> <span class="n">scipy</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">wavfile</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s">"example1.wav"</span><span class="p">)</span>
+<span class="n">sampleDur</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">myRecording</span><span class="p">)</span><span class="o">/</span><span class="n">sampleFreq</span>
+<span class="n">timeX</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="n">sampleDur</span><span class="p">,</span> <span class="mi">1</span><span class="o">/</span><span class="n">sampleFreq</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">timeX</span><span class="p">,</span> <span class="n">myRecording</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s">'x(k)'</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s">'time[s]'</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+    </code></pre></figure>
+  </div>
+<br><br>
+<p>
+As you can see the signal has a period length of roughly 2.27ms which corresponds to a frequency of 440Hz.
+So far so good.
+But you can also see that the signal is far away from being a pure tone. So, what is happening there?
+</p>
+<p>
+To answer this question we need to make use of the so-called <b>Discrete Fourier Transform (DFT)</b>. <br>
+It's basically the allround tool of any digital signal processing engineer.
+From a mathematical point of view it shows how a discrete signal can be decomposed as a set of cosine functions
+oscillating at different frequecies.<br>
+Or in musical terms: the DFT shows which pure tones can be found in an audio recording.
+If you are interested in the mathematical details of the DFT, I recommend you to read my previous
+<a href="/digital/signal/processing/2020/04/13/dft.html" target="_blank">post</a>.
+But no worries, the most important aspects will be repeated in this post.<br>
+The cool thing about the DFT is that it provides us with a so called magnitude spectrum. For the given example it looks like this:
+</p>
+<img class="center" width="75%" src="/assets/guitar_tuner/example1_dft.svg">
+<button class="accordion"><b>Code for creating a DFT plot</b></button>
+  <div class="panel">
+    <figure class="highlight"><pre><code class="language-python" data-lang="python"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+</pre></td><td class="code"><pre><span class="kn">import</span> <span class="nn">scipy.io.wavfile</span>
+<span class="kn">import</span> <span class="nn">matplotlib.pyplot</span> <span class="k">as</span> <span class="n">plt</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="n">np</span>
+<span class="kn">from</span> <span class="nn">scipy.fftpack</span> <span class="kn">import</span> <span class="n">fft</span>
+
+<span class="n">sampleFreq</span><span class="p">,</span> <span class="n">myRecording</span> <span class="o">=</span> <span class="n">scipy</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">wavfile</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s">"example1.wav"</span><span class="p">)</span>
+<span class="n">sampleDur</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">myRecording</span><span class="p">)</span><span class="o">/</span><span class="n">sampleFreq</span>
+<span class="n">timeX</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">sampleFreq</span><span class="o">/</span><span class="mi">2</span><span class="p">,</span> <span class="n">sampleFreq</span><span class="o">/</span><span class="nb">len</span><span class="p">(</span><span class="n">myRecording</span><span class="p">))</span>
+<span class="n">absFreqSpectrum</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">fft</span><span class="p">(</span><span class="n">myRecording</span><span class="p">))</span>
+<span class="k">print</span><span class="p">(</span><span class="n">absFreqSpectrum</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">timeX</span><span class="p">,</span> <span class="n">absFreqSpectrum</span><span class="p">[:</span><span class="nb">len</span><span class="p">(</span><span class="n">myRecording</span><span class="p">)</span><span class="o">//</span><span class="mi">2</span><span class="p">])</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s">'|X(n)|'</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s">'frequency[Hz]'</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+    
+</pre></td></tr></tbody></table></code></pre></figure>
+  </div>
+<br><br>
+<p>
+On the x-axis you can see the frequencies of the pure tones while the y-Axis displays their intensity.
+<p>
+The spectrum reveals some interesting secrets which you couldn't see in the time domain.
+As expected there is a strong intensity of the pure tone at 440Hz.
+But there are other significant peaks at integer multiples of 440Hz. For example, 880Hz, 1320Hz, etc.
+If you are familiar with music you may know the name of these peaks: harmonics or overtones.
+</p>
+<p>
+The reason for the overtones is quite simple. When you hit a guitar string you excite it to vibrate at certain frequencies.
+Especially frequencies which form standing waves can vibrate for a long time.
+These fulfill the boundary conditions that the string cannot move at the points where it is attached to the guitar (bridge and nut).
+Thus, multiple overtones are also excited which are all multiples of the fundamental frequency. The following GIF visualizes this:
+<img class="center" width="70%" src="/assets/guitar_tuner/standing_waves.gif">
+</p>
+<p>
+The overall set of harmonics and how they are related is called <b>timbre</b>.
+A timbre is what makes your guitar sound like a guitar and not like any other instrument.
+This is pretty cool on the one hand, but it makes pitch detection a real challenge.
+Because at this point you might already had an idea for a guitar tuner: create a DFT spectrum, determine the frequency of the highest peak, done.
+Well, for the given spectrum about this might work, but there are many cases for which you will get wrong results.
+<br>
+The first reason is that the fundamental frequency does not always have to create the highest peak.
+Altough not beeing the highest peak the pitch is determined by it.
+This is the reason why pitch detection is not just a simple frequency detection!
+<br>
+The second reason is that the power of the guitar signal is distributed over a large frequency band.
+By selecting only the highest peak, the algorithm would be very prone to narrowband noise.
+In the example spectrum given about you can see a high peak at 50Hz which is caused by mains hum.
+Although the peak is relatively high, it does not determine the overall sound impression of the recording.
+Or did you feel like the 50Hz noise was very present?
+</p>
+<p>
+The complexity of this problem has lead to a number of different <a href="https://en.wikipedia.org/wiki/Pitch_detection_algorithm" target="_blank">
+pitch detection algorithms</a>. In order to choose the right algorithm we have to think about what requirements a guitar tuner needs to fullfill.
+The most important requirements surely are:
+<ul>
+  <li>
+    <b>Accuracy</b>: According to <a href="https://books.google.de/books?id=Slg10ekZBkAC&pg=PA65&redir_esc=y#v=onepage&q&f=false" target="_blank">[4]</a>, the human just-noticable difference
+    for complex tones under 1000Hz is roughly 1Hz. So, our goal should roughly be a frequency resolution of 1Hz in a frequency range of ca. 80-400Hz.
+  </li>
+  <li>
+    <b>Realtime capabability</b>: When using the tuner we want to have a live feedback about which note we play.
+    We therefore have to consider things like the runtime complexity of the algorithm and the hardware we are using.
+  </li>
+  <li>
+    <b>Delay:</b> If the results only popup 5 seconds after we played a string, tuning our guitar accurately will be pretty hard.
+    I cannot provide you with any literature on that, but I guess a delay of lesser than 500ms sounds fair.
+  </li>
+  <li>
+    <b>Robustness:</b> Even in noisy environments a guitar tuner should be capable of doing its job.
+    Especially the omnipresent mains hum at 50Hz (or 60 Hz depending on where you live) shouldn't be a problem.
+  </li>
+</ul>
+</p>
+<p>
+In the following we will start with programming a simple maximum frequency peak algorithm.
+As already mentioned above, this method may not work pretty well since the fundamental frequency is not guarenteed to always have the highest peak.
+However, this method is quite simple and a gentle introduction to this subject.
+</p>
+<p>
+In the second the section a more sophisticated algorithm using the <b>Harmonic Product Spectrums (HPS)</b> is implemented.
+It is based on the simple tuner, so don't skip the first section ;)
+</p>
+
+<h3 id="dft">3.1 Simple DFT tuner</h3>
+<p>
+Our first approach will be a simple guitar tuner using the DFT peak approach.
+Usually the DFT algorithm is applied to the whole duration of signal.
+However, our guitar tuner is a realtime application where there is no concept of a "whole signal".
+Furthermore, as we are going to play several different notes, only the last few seconds are relevant for pitch detection.
+So, instead we use the so called discrete <b>Short-Time Fourier Transform (STFT)</b> which is basically just the DFT applied for the most recent samples.
+You can imagine it as some kind of window where new samples push out the oldest samples:
+<img class="center" width="90%" src="/assets/guitar_tuner/sliding_dft.gif">
+Note, that the spectrum is now a so-called <b>spectrogram</b> as it varies over time.
+</p>
+<p>
+Before we start with programming our tuner, we have to think about design considerations concerning the DFT algorithm.
+Because can the DFT fullfill the requirements we proposed above?
+</p>
+<p>
+Let's begin with the frequency range.
+The DFT allows you to analyze frequencies in the range of \( f < f_s / 2 \) with \(f_s\) beeing the sample frequency.
+Typical sound recording devices use a sampling rate of around 40kHz giving us a frequency range of \(f < 20kHz\).
+This is more than enough to even capture all the overtones.<br>
+
+Note, that the frequency range is an inherent property of the DFT algorithm, but there is also a close relation to the
+<b>Nyquist–Shannon sampling theorem</b>.
+The theorem states that you cannot extract all the information from a signal if the highest occuring frequencies
+are greater than \(f_s / 2 \). This means the DFT is already working at the theoretical limit.
+</p>
+<p>
+As a next point we look at the frequency resolution of the DFT which is
+(for details see my <a href="/digital/signal/processing/2020/04/13/dft.html" target="_blank">DFT post</a>):
+$$ f_s / N \approx 1 / t_{window} [Hz]$$
+With \(N\) being the window size in samples, and \(t_{window}\) the window size in seconds.
+The resolution in Hertz is approximately the reciprocal of the window size in seconds.
+So, if we have a window of 500ms, then our frequency resolution is 2Hz.
+This is where things become tricky as a larger window results in a better frequency resolution but negatively affects the delay.
+If we consider frequency resolution more important up to a certaint extent than delay, a windows size of 1s sounds like a good choice.
+With this setting we achieve a frequency resolution of 1Hz.
+</p>
+<p>
+So far so good. If you convert all this knowledge to some code, your result might look like this:
+<figure class="highlight"><pre><code class="language-python" data-lang="python"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+</pre></td><td class="code"><pre><span class="kn">import</span> <span class="nn">sounddevice</span> <span class="k">as</span> <span class="n">sd</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="n">np</span>
+<span class="kn">import</span> <span class="nn">scipy.fftpack</span>
+<span class="kn">import</span> <span class="nn">os</span>
+
+<span class="c1"># General settings
+</span><span class="n">SAMPLE_FREQ</span> <span class="o">=</span> <span class="mi">44100</span> <span class="c1"># sample frequency in Hz
+</span><span class="n">WINDOW_SIZE</span> <span class="o">=</span> <span class="mi">44100</span> <span class="c1"># window size of the DFT in samples
+</span><span class="n">WINDOW_STEP</span> <span class="o">=</span> <span class="mi">21050</span> <span class="c1"># step size of window
+</span><span class="n">WINDOW_T_LEN</span> <span class="o">=</span> <span class="n">WINDOW_SIZE</span> <span class="o">/</span> <span class="n">SAMPLE_FREQ</span> <span class="c1"># length of the window in seconds
+</span><span class="n">SAMPLE_T_LENGTH</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">SAMPLE_FREQ</span> <span class="c1"># length between two samples in seconds
+</span><span class="n">windowSamples</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">WINDOW_SIZE</span><span class="p">)]</span>
+
+<span class="c1"># This function finds the closest note for a given pitch
+# Returns: note (e.g. A4, G#3, ..), pitch of the tone
+</span><span class="n">CONCERT_PITCH</span> <span class="o">=</span> <span class="mi">440</span>
+<span class="n">ALL_NOTES</span> <span class="o">=</span> <span class="p">[</span><span class="s">"A"</span><span class="p">,</span><span class="s">"A#"</span><span class="p">,</span><span class="s">"B"</span><span class="p">,</span><span class="s">"C"</span><span class="p">,</span><span class="s">"C#"</span><span class="p">,</span><span class="s">"D"</span><span class="p">,</span><span class="s">"D#"</span><span class="p">,</span><span class="s">"E"</span><span class="p">,</span><span class="s">"F"</span><span class="p">,</span><span class="s">"F#"</span><span class="p">,</span><span class="s">"G"</span><span class="p">,</span><span class="s">"G#"</span><span class="p">]</span>
+<span class="k">def</span> <span class="nf">find_closest_note</span><span class="p">(</span><span class="n">pitch</span><span class="p">):</span>
+  <span class="n">i</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="nb">round</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">pitch</span><span class="o">/</span><span class="n">CONCERT_PITCH</span><span class="p">)</span><span class="o">*</span><span class="mi">12</span><span class="p">))</span>
+  <span class="n">closest_note</span> <span class="o">=</span> <span class="n">ALL_NOTES</span><span class="p">[</span><span class="n">i</span><span class="o">%</span><span class="mi">12</span><span class="p">]</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="mi">4</span> <span class="o">+</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">9</span><span class="p">)</span> <span class="o">//</span> <span class="mi">12</span><span class="p">)</span>
+  <span class="n">closest_pitch</span> <span class="o">=</span> <span class="n">CONCERT_PITCH</span><span class="o">*</span><span class="mi">2</span><span class="o">**</span><span class="p">(</span><span class="n">i</span><span class="o">/</span><span class="mi">12</span><span class="p">)</span>
+  <span class="k">return</span> <span class="n">closest_note</span><span class="p">,</span> <span class="n">closest_pitch</span>
+
+<span class="c1"># The sounddecive callback function
+# Provides us with new data once WINDOW_STEP samples have been fetched
+</span><span class="k">def</span> <span class="nf">callback</span><span class="p">(</span><span class="n">indata</span><span class="p">,</span> <span class="n">frames</span><span class="p">,</span> <span class="n">time</span><span class="p">,</span> <span class="n">status</span><span class="p">):</span>
+  <span class="k">global</span> <span class="n">windowSamples</span>
+  <span class="k">if</span> <span class="n">status</span><span class="p">:</span>
+    <span class="k">print</span><span class="p">(</span><span class="n">status</span><span class="p">)</span>
+  <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">indata</span><span class="p">):</span>
+    <span class="n">windowSamples</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">windowSamples</span><span class="p">,</span><span class="n">indata</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]))</span> <span class="c1"># append new samples
+</span>    <span class="n">windowSamples</span> <span class="o">=</span> <span class="n">windowSamples</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">indata</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]):]</span> <span class="c1"># remove old samples
+</span>    <span class="n">magnitudeSpec</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span> <span class="n">scipy</span><span class="o">.</span><span class="n">fftpack</span><span class="o">.</span><span class="n">fft</span><span class="p">(</span><span class="n">windowSamples</span><span class="p">)[:</span><span class="nb">len</span><span class="p">(</span><span class="n">windowSamples</span><span class="p">)</span><span class="o">//</span><span class="mi">2</span><span class="p">]</span> <span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="mi">62</span><span class="o">/</span><span class="p">(</span><span class="n">SAMPLE_FREQ</span><span class="o">/</span><span class="n">WINDOW_SIZE</span><span class="p">))):</span>
+      <span class="n">magnitudeSpec</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span> <span class="c1">#suppress mains hum
+</span>
+    <span class="n">maxInd</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">magnitudeSpec</span><span class="p">)</span>
+    <span class="n">maxFreq</span> <span class="o">=</span> <span class="n">maxInd</span> <span class="o">*</span> <span class="p">(</span><span class="n">SAMPLE_FREQ</span><span class="o">/</span><span class="n">WINDOW_SIZE</span><span class="p">)</span>
+    <span class="n">closestNote</span><span class="p">,</span> <span class="n">closestPitch</span> <span class="o">=</span> <span class="n">find_closest_note</span><span class="p">(</span><span class="n">maxFreq</span><span class="p">)</span>
+
+    <span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s">'cls'</span> <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">name</span><span class="o">==</span><span class="s">'nt'</span> <span class="k">else</span> <span class="s">'clear'</span><span class="p">)</span>
+    <span class="k">print</span><span class="p">(</span><span class="n">f</span><span class="s">"Closest note: {closestNote} {maxFreq:.1f}/{closestPitch:.1f}"</span><span class="p">)</span>
+  <span class="k">else</span><span class="p">:</span>
+    <span class="k">print</span><span class="p">(</span><span class="s">'no input'</span><span class="p">)</span>
+
+<span class="c1"># Start the microphone input stream
+</span><span class="k">try</span><span class="p">:</span>
+  <span class="k">with</span> <span class="n">sd</span><span class="o">.</span><span class="n">InputStream</span><span class="p">(</span><span class="n">channels</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">callback</span><span class="o">=</span><span class="n">callback</span><span class="p">,</span>
+    <span class="n">blocksize</span><span class="o">=</span><span class="n">WINDOW_STEP</span><span class="p">,</span>
+    <span class="n">samplerate</span><span class="o">=</span><span class="n">SAMPLE_FREQ</span><span class="p">):</span>
+    <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+      <span class="k">pass</span>
+<span class="k">except</span> <span class="nb">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="k">print</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+</pre></td></tr></tbody></table></code></pre></figure>
+</p>
+<p>
+This code should work out of the box, assuming that the corresponding python libraries are installed.
+Here are some out-of-code comments which explain the single lines more in detail:<br>
+</p>
+<p>
+<i>Line 1-4: Basic imports such as numpy for math stuff and sounddecive for capturing the microphone input</i><br>
+<i>Line 7-12: Global variables</i><br>
+<i>Line 14-22: The function for finding the nearest note for a given pitch. See section "Guitars & Pitches" for the detailed explaination.</i><br>
+<i>Line 24-45: These lines are the heart of our simple guitar tuner, so a let's have a closer look.</i><br>
+<i>Line 31-32: Here the incoming samples are appended to an array while the old samples are remmoved.
+  Thus, a window of WINDOW_SIZE samples is obtained.</i><br>
+<i>Line 33: The magnitude spectrum is obtained by using the Fast Fourier Transform.
+  Note, that one half of the spectrum only provides redundant information.</i><br>
+<i>Line 35-36: Here the mains hum is suppressed by simply setting all frequencies below 62Hz to 0.
+  This is still sufficient for a drop C tuning (C<sub>2</sub>=65.4Hz).
+</i><br>
+<i>Line 38-40: First, the highest frequency peak is determined.
+  As a next step the highest frequencies is used to get the closest pitch and note.</i><br>
+<i>Line 48-55: The input stream is initialized and runs in an infinite loop.
+  Once enough data is sampled, the callback function is called.
+</i><br>
+<i>Line 42-43: Printing the results. Depending on your operating system a different clear function has to be called.
+</i><br>
+</p>
+<p>
+I also made a javascript version which works directly from you browser.
+Note, that it uses slightly different parameters.
+The corresponding magnitude spectrum is also visualized:
+    <canvas class="center" id="canCtxSimple" width="600" height="300">
+</p>
+<p>
+If you tried to tune your guitar using this tuner you probably noticed that it doesn't work pretty well.
+As expected there main problem are harmonic errors as the overtones are often more intense than the actual fundamental frequency.
+A way to deal with is problem is using the Harmonic Product Spectrums as the next section will show.
+</p>
+<h3 id="hps">HPS tuner</h3>
+<p>
+In this section we will refine our simple tuner by using the so-called Harmonic Product Spectrum (HPS) which was introduced by A. M. Noll in 1969.
+The idea behind it is quite simple yet clever.
+The Harmonic Product Spectrum is a multiplication of \(R\) magnitude spectrums with different frequency scalings:
+$$ Y(f) = \prod_{r=1}^{R} |X(fr)| $$
+With \(X(f)\) being the magnitude spectrum of the signal.
+I think that this is hard to explain in words, so let's take a look at a visualization for \(R=4\):
+<img class="center" width="70%" src="/assets/guitar_tuner/hps1.svg">
+In the upper half of the visualization you can see the magnitude spectrums for the 440Hz guitar tone example.
+Each with a different frequency scaling factor \(r\).
+These magnitude spectrums are multiplied in a subsequent step resulting in the Harmonic Product Spectrum \(|Y(f)|\).
+As the frequency scaling is always an integer number, the product vanishes for non-fundamental frequencies.
+Thus, the last step is simply taking the highest peak of the HPS:
+$$ f_{max} = \max_{f}{|Y(f)|} $$
+For the given example the peak at 440Hz is perfectly determined.<br>
+In terms of frequency resolution and delay, the HPS tuner is pretty similar to the simple DFT tuner as the DFT is the basis of the HPS.
+However, as the HPS uses the harmonies as well to determine the pitch a higher frequency resolution can be achieved if the spectrum is
+interpolated and upsampled before the HPS process is executed.
+Note, that upsampling and intepolating does not add any information to the spectrum but avoids information loss as the spectrum is effectively downsampled
+when using different frequency scaling.
+<br>
+Let me illustrate this by using an intuitive example.
+Assuming we have a DFT with a frequency resolution of 1Hz
+and we have a peak at 1761 Hz from which we know that it is the 4th harmonic of a fundamental frequency at 440Hz in the spectrum.
+If you have this information, you can calculate \(1761/4=440.25\) and conclude that the fundamental frequency is rather 440.25Hz than 440Hz.
+The same principle is used by the HPS algorithm.
+</p>
+<p>
+A python version of a HPS guitar tuner may look like this:
+</p>
+<figure class="highlight"><pre><code class="language-python" data-lang="python"><table class="rouge-table"><tbody><tr><td class="gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+77
+78
+79
+80
+81
+82
+83
+84
+85
+86
+87
+88
+89
+90
+91
+92
+93
+94
+95
+96
+97
+98
+99
+100
+101
+102
+103
+104
+105
+106
+107
+108
+109
+110
+111
+112
+113
+114
+115
+116
+117
+118
+119
+120
+121
+122
+123
+124
+125
+126
+127
+128
+</pre></td><td class="code"><pre><span class="s">'''
+Guitar tuner script based on the Harmonic Product Spectrum (HPS)
+
+MIT License
+Copyright (c) 2021 chciken
+'''</span>
+
+<span class="kn">import</span> <span class="nn">copy</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="n">np</span>
+<span class="kn">import</span> <span class="nn">scipy.fftpack</span>
+<span class="kn">import</span> <span class="nn">sounddevice</span> <span class="k">as</span> <span class="n">sd</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="c1"># General settings that can be changed by the user
+</span><span class="n">SAMPLE_FREQ</span> <span class="o">=</span> <span class="mi">48000</span> <span class="c1"># sample frequency in Hz
+</span><span class="n">WINDOW_SIZE</span> <span class="o">=</span> <span class="mi">48000</span> <span class="c1"># window size of the DFT in samples
+</span><span class="n">WINDOW_STEP</span> <span class="o">=</span> <span class="mi">12000</span> <span class="c1"># step size of window
+</span><span class="n">NUM_HPS</span> <span class="o">=</span> <span class="mi">5</span> <span class="c1"># max number of harmonic product spectrums
+</span><span class="n">POWER_THRESH</span> <span class="o">=</span> <span class="mf">1e-6</span> <span class="c1"># tuning is activated if the signal power exceeds this threshold
+</span><span class="n">CONCERT_PITCH</span> <span class="o">=</span> <span class="mi">440</span> <span class="c1"># defining a1
+</span><span class="n">WHITE_NOISE_THRESH</span> <span class="o">=</span> <span class="mf">0.2</span> <span class="c1"># everything under WHITE_NOISE_THRESH*avg_energy_per_freq is cut off
+</span>
+<span class="n">WINDOW_T_LEN</span> <span class="o">=</span> <span class="n">WINDOW_SIZE</span> <span class="o">/</span> <span class="n">SAMPLE_FREQ</span> <span class="c1"># length of the window in seconds
+</span><span class="n">SAMPLE_T_LENGTH</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">SAMPLE_FREQ</span> <span class="c1"># length between two samples in seconds
+</span><span class="n">DELTA_FREQ</span> <span class="o">=</span> <span class="n">SAMPLE_FREQ</span> <span class="o">/</span> <span class="n">WINDOW_SIZE</span> <span class="c1"># frequency step width of the interpolated DFT
+</span><span class="n">OCTAVE_BANDS</span> <span class="o">=</span> <span class="p">[</span><span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">,</span> <span class="mi">400</span><span class="p">,</span> <span class="mi">800</span><span class="p">,</span> <span class="mi">1600</span><span class="p">,</span> <span class="mi">3200</span><span class="p">,</span> <span class="mi">6400</span><span class="p">,</span> <span class="mi">12800</span><span class="p">,</span> <span class="mi">25600</span><span class="p">]</span>
+
+<span class="n">ALL_NOTES</span> <span class="o">=</span> <span class="p">[</span><span class="s">"A"</span><span class="p">,</span><span class="s">"A#"</span><span class="p">,</span><span class="s">"B"</span><span class="p">,</span><span class="s">"C"</span><span class="p">,</span><span class="s">"C#"</span><span class="p">,</span><span class="s">"D"</span><span class="p">,</span><span class="s">"D#"</span><span class="p">,</span><span class="s">"E"</span><span class="p">,</span><span class="s">"F"</span><span class="p">,</span><span class="s">"F#"</span><span class="p">,</span><span class="s">"G"</span><span class="p">,</span><span class="s">"G#"</span><span class="p">]</span>
+<span class="k">def</span> <span class="nf">find_closest_note</span><span class="p">(</span><span class="n">pitch</span><span class="p">):</span>
+  <span class="s">"""
+  This function finds the closest note for a given pitch
+  Parameters:
+    pitch (float): pitch given in hertz
+  Returns:
+    closest_note (str): e.g. a, g#, ..
+    closest_pitch (float): pitch of the closest note in hertz
+  """</span>
+  <span class="n">i</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="nb">round</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">pitch</span><span class="o">/</span><span class="n">CONCERT_PITCH</span><span class="p">)</span><span class="o">*</span><span class="mi">12</span><span class="p">))</span>
+  <span class="n">closest_note</span> <span class="o">=</span> <span class="n">ALL_NOTES</span><span class="p">[</span><span class="n">i</span><span class="o">%</span><span class="mi">12</span><span class="p">]</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="mi">4</span> <span class="o">+</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">9</span><span class="p">)</span> <span class="o">//</span> <span class="mi">12</span><span class="p">)</span>
+  <span class="n">closest_pitch</span> <span class="o">=</span> <span class="n">CONCERT_PITCH</span><span class="o">*</span><span class="mi">2</span><span class="o">**</span><span class="p">(</span><span class="n">i</span><span class="o">/</span><span class="mi">12</span><span class="p">)</span>
+  <span class="k">return</span> <span class="n">closest_note</span><span class="p">,</span> <span class="n">closest_pitch</span>
+
+<span class="n">HANN_WINDOW</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">hanning</span><span class="p">(</span><span class="n">WINDOW_SIZE</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">callback</span><span class="p">(</span><span class="n">indata</span><span class="p">,</span> <span class="n">frames</span><span class="p">,</span> <span class="n">time</span><span class="p">,</span> <span class="n">status</span><span class="p">):</span>
+  <span class="s">"""
+  Callback function of the InputStream method.
+  That's where the magic happens ;)
+  """</span>
+  <span class="c1"># define static variables
+</span>  <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">callback</span><span class="p">,</span> <span class="s">"window_samples"</span><span class="p">):</span>
+    <span class="n">callback</span><span class="o">.</span><span class="n">window_samples</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">WINDOW_SIZE</span><span class="p">)]</span>
+  <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">callback</span><span class="p">,</span> <span class="s">"noteBuffer"</span><span class="p">):</span>
+    <span class="n">callback</span><span class="o">.</span><span class="n">noteBuffer</span> <span class="o">=</span> <span class="p">[</span><span class="s">"1"</span><span class="p">,</span><span class="s">"2"</span><span class="p">]</span>
+
+  <span class="k">if</span> <span class="n">status</span><span class="p">:</span>
+    <span class="k">print</span><span class="p">(</span><span class="n">status</span><span class="p">)</span>
+    <span class="k">return</span>
+  <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">indata</span><span class="p">):</span>
+    <span class="n">callback</span><span class="o">.</span><span class="n">window_samples</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">callback</span><span class="o">.</span><span class="n">window_samples</span><span class="p">,</span> <span class="n">indata</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]))</span> <span class="c1"># append new samples
+</span>    <span class="n">callback</span><span class="o">.</span><span class="n">window_samples</span> <span class="o">=</span> <span class="n">callback</span><span class="o">.</span><span class="n">window_samples</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">indata</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]):]</span> <span class="c1"># remove old samples
+</span>
+    <span class="c1"># skip if signal power is too low
+</span>    <span class="n">signal_power</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">callback</span><span class="o">.</span><span class="n">window_samples</span><span class="p">,</span> <span class="nb">ord</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">callback</span><span class="o">.</span><span class="n">window_samples</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">signal_power</span> <span class="o">&lt;</span> <span class="n">POWER_THRESH</span><span class="p">:</span>
+      <span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s">'cls'</span> <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">name</span><span class="o">==</span><span class="s">'nt'</span> <span class="k">else</span> <span class="s">'clear'</span><span class="p">)</span>
+      <span class="k">print</span><span class="p">(</span><span class="s">"Closest note: ..."</span><span class="p">)</span>
+      <span class="k">return</span>
+
+    <span class="c1"># avoid spectral leakage by multiplying the signal with a hann window
+</span>    <span class="n">hann_samples</span> <span class="o">=</span> <span class="n">callback</span><span class="o">.</span><span class="n">window_samples</span> <span class="o">*</span> <span class="n">HANN_WINDOW</span>
+    <span class="n">magnitude_spec</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">scipy</span><span class="o">.</span><span class="n">fftpack</span><span class="o">.</span><span class="n">fft</span><span class="p">(</span><span class="n">hann_samples</span><span class="p">)[:</span><span class="nb">len</span><span class="p">(</span><span class="n">hann_samples</span><span class="p">)</span><span class="o">//</span><span class="mi">2</span><span class="p">])</span>
+
+    <span class="c1"># supress mains hum, set everything below 62Hz to zero
+</span>    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="mi">62</span><span class="o">/</span><span class="n">DELTA_FREQ</span><span class="p">)):</span>
+      <span class="n">magnitude_spec</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="c1"># calculate average energy per frequency for the octave bands
+</span>    <span class="c1"># and suppress everything below it
+</span>    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">OCTAVE_BANDS</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+      <span class="n">ind_start</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">OCTAVE_BANDS</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="o">/</span><span class="n">DELTA_FREQ</span><span class="p">)</span>
+      <span class="n">ind_end</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">OCTAVE_BANDS</span><span class="p">[</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span><span class="o">/</span><span class="n">DELTA_FREQ</span><span class="p">)</span>
+      <span class="n">ind_end</span> <span class="o">=</span> <span class="n">ind_end</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">magnitude_spec</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">ind_end</span> <span class="k">else</span> <span class="nb">len</span><span class="p">(</span><span class="n">magnitude_spec</span><span class="p">)</span>
+      <span class="n">avg_energy_per_freq</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">magnitude_spec</span><span class="p">[</span><span class="n">ind_start</span><span class="p">:</span><span class="n">ind_end</span><span class="p">],</span> <span class="nb">ord</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">ind_end</span><span class="o">-</span><span class="n">ind_start</span><span class="p">)</span>
+      <span class="n">avg_energy_per_freq</span> <span class="o">=</span> <span class="n">avg_energy_per_freq</span><span class="o">**</span><span class="mf">0.5</span>
+      <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">ind_start</span><span class="p">,</span> <span class="n">ind_end</span><span class="p">):</span>
+        <span class="n">magnitude_spec</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">magnitude_spec</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">if</span> <span class="n">magnitude_spec</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">WHITE_NOISE_THRESH</span><span class="o">*</span><span class="n">avg_energy_per_freq</span> <span class="k">else</span> <span class="mi">0</span>
+
+    <span class="c1"># interpolate spectrum
+</span>    <span class="n">mag_spec_ipol</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">interp</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">magnitude_spec</span><span class="p">),</span> <span class="mi">1</span><span class="o">/</span><span class="n">NUM_HPS</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">magnitude_spec</span><span class="p">)),</span>
+                              <span class="n">magnitude_spec</span><span class="p">)</span>
+    <span class="n">mag_spec_ipol</span> <span class="o">=</span> <span class="n">mag_spec_ipol</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">mag_spec_ipol</span><span class="p">,</span> <span class="nb">ord</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span> <span class="c1">#normalize it
+</span>
+    <span class="n">hps_spec</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">mag_spec_ipol</span><span class="p">)</span>
+
+    <span class="c1"># calculate the HPS
+</span>    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">NUM_HPS</span><span class="p">):</span>
+      <span class="n">tmp_hps_spec</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">multiply</span><span class="p">(</span><span class="n">hps_spec</span><span class="p">[:</span><span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">mag_spec_ipol</span><span class="p">)</span><span class="o">/</span><span class="p">(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)))],</span> <span class="n">mag_spec_ipol</span><span class="p">[::(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)])</span>
+      <span class="k">if</span> <span class="ow">not</span> <span class="nb">any</span><span class="p">(</span><span class="n">tmp_hps_spec</span><span class="p">):</span>
+        <span class="k">break</span>
+      <span class="n">hps_spec</span> <span class="o">=</span> <span class="n">tmp_hps_spec</span>
+
+    <span class="n">max_ind</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">hps_spec</span><span class="p">)</span>
+    <span class="n">max_freq</span> <span class="o">=</span> <span class="n">max_ind</span> <span class="o">*</span> <span class="p">(</span><span class="n">SAMPLE_FREQ</span><span class="o">/</span><span class="n">WINDOW_SIZE</span><span class="p">)</span> <span class="o">/</span> <span class="n">NUM_HPS</span>
+
+    <span class="n">closest_note</span><span class="p">,</span> <span class="n">closest_pitch</span> <span class="o">=</span> <span class="n">find_closest_note</span><span class="p">(</span><span class="n">max_freq</span><span class="p">)</span>
+    <span class="n">max_freq</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">max_freq</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">closest_pitch</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">closest_pitch</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">callback</span><span class="o">.</span><span class="n">noteBuffer</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">closest_note</span><span class="p">)</span> <span class="c1"># note that this is a ringbuffer
+</span>    <span class="n">callback</span><span class="o">.</span><span class="n">noteBuffer</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+
+    <span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s">'cls'</span> <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">name</span><span class="o">==</span><span class="s">'nt'</span> <span class="k">else</span> <span class="s">'clear'</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">callback</span><span class="o">.</span><span class="n">noteBuffer</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="n">callback</span><span class="o">.</span><span class="n">noteBuffer</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">callback</span><span class="o">.</span><span class="n">noteBuffer</span><span class="p">):</span>
+      <span class="k">print</span><span class="p">(</span><span class="n">f</span><span class="s">"Closest note: {closest_note} {max_freq}/{closest_pitch}"</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+      <span class="k">print</span><span class="p">(</span><span class="n">f</span><span class="s">"Closest note: ..."</span><span class="p">)</span>
+
+  <span class="k">else</span><span class="p">:</span>
+    <span class="k">print</span><span class="p">(</span><span class="s">'no input'</span><span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+  <span class="k">print</span><span class="p">(</span><span class="s">"Starting HPS guitar tuner..."</span><span class="p">)</span>
+  <span class="k">with</span> <span class="n">sd</span><span class="o">.</span><span class="n">InputStream</span><span class="p">(</span><span class="n">channels</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">callback</span><span class="o">=</span><span class="n">callback</span><span class="p">,</span> <span class="n">blocksize</span><span class="o">=</span><span class="n">WINDOW_STEP</span><span class="p">,</span> <span class="n">samplerate</span><span class="o">=</span><span class="n">SAMPLE_FREQ</span><span class="p">):</span>
+    <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+      <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+<span class="k">except</span> <span class="nb">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+  <span class="k">print</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">))</span>
+</pre></td></tr></tbody></table></code></pre></figure>
+<p>
+The basic code has many things in common with simple DFT tuner, but of course the algorithmic parts are pretty different.
+Furthermore, some signal processing methods were added in order to increase the signal quality. These methods could also be applied to the DFT tuner.
+In the following I will provide some comments on the code:
+</p>
+<p>
+<i>Line 64-68: Calculate the signal power. If there is no sound, we don't need to do the signal processing part.</i><br>
+<i>Line 70-71: The signal is multiplied with a Hann Window to reduce
+  <a href="https://en.wikipedia.org/wiki/Spectral_leakage" target="_blank">spectral leakage</a>.</i><br>
+<i>Line 74-76: Suppress mains hum. This is a quite important signal enhacement.</i><br>
+<i>Line 78-87: The average energy for a frequency band is calculated.
+  If the energy of a given frequency is below this average energy, then the energy is set to zero.
+  With this method we can reduce white noise or noise which is very close to white noise (note, that white noise has a flat spectral distribution).
+  This is necessary as the HPS method does not work so well if there is a lot of white noise.</i><br>
+<i>Line 89-94: Here the DFT spectrum is interpolated. We need to do this as we are required to downsample the spectrum in the later steps.
+  Imagine there is a perfect peak at a given frequency and all the frequencies next to it are zero.
+  If we now downsample the spectrum, there is a certain risk that this peak is simply ignored.
+  This can be avoided having an interpolated spectrum as the peaks are "smeared" over a larger area.
+</i><br>
+<i>Line 96-101: The heart of the HPS algorithm. Here the frequency scaled spectrums are multiplied <monospace>NUM_HPS</monospace> times.
+  The loop is stopped earlier if the spectrum is completely 0.
+</i><br>
+<i>Line 103-...: Basically the same as DFT algorithm but with a majority vote filter.
+  Only print the note, if the previous note is the same.</i><br>
+</p>
+<p>
+Again, I also made a javascript version of this with some reduced signal enhacement as javascript is not really made for realtime signal processing.
+</p>
+<canvas class="center" id="canCtxHPS" width="600" height="300"></canvas>
+If you compare this tuner to the previous simple tuner, you will probably notice that it already works many times more accurate.
+In fact, when plugging my guitar directly into the computer with an audio interface, it works perfectly.
+When using a simple microphone I rarely notice some harmonic errors but in general tuning the guitar is possible.<br>
+<p>
+Also other people sometimes observed these harmonic erros (thank you for feedback, Valentin), so I had to investigate.
+By analyzing some spectrums where the pitch was incorrectly indentified, a came across a fundamental theoretical weakness of the algorithm.
+If one the overtone is missing, then the fundamental frequency is eventually multiplied by zero and consequently vanishes from the HPS.
+With this current implementation this situation might also occur, if one of the harmonics was so weak that it is considered as white noise.
+To counteract this phenomenon I added the <monospace>WHITE_NOISE_THRESH</monospace> parameter which sets the threshold for when
+signals are cut off. For me a default value of 0.2 works quite well.
+However, if your instrument is really missing one overtone, well, then there isn't much you can do with the HPS tuner.
+So, maybe we I could explore some others approach in the future.
+</p>
+</p>
+
+<h2 id="summary">4. Summary</h2>
+<p>
+In this post I showed how to write a guitar tuner using Python.
+We first started with a simple DFT peak detection algorithm and then refined it using a Harmonic Product Spectrum approach
+which already gave us a solid guitar tuner.
+In case of harsh environments or missing overtones the HPS tuner sometimes suffers from harmonic errors,
+so in the future I might make more guitar tuners using different pitch detection algorithms based on cepstrums (yes, this is correct, you are not having a stroke)
+or correlation.<br>
+If you like to add or critize somthing, pease contact me :)
+You can do this by writing an e-mail to me (see <a href="/about/">About</a>).
+<br>
+</p>
+
+<h2 id="honor">5. Honorable Mentions</h2>
+Thanks to <a href="https://github.com/Winand" target="_blank">Winand</a> for not only pointing out bugs, but also for providing
+merge requests and useful feedback!
+Also thanks to Valentin for telling me about harmonic errors and fixing some typos.
+
+
+<script>
+    var acc = document.getElementsByClassName("accordion");
+    var i;
+    for (i = 0; i < acc.length; i++) {
+      acc[i].addEventListener("click", function() {
+        this.classList.toggle("active");
+        console.log(this);
+          var panel = this.nextElementSibling;
+            if (panel.style.display === "block") {
+              panel.style.display = "none";
+              } else {
+              panel.style.display = "block";
+              }
+            });
+    }
+</script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/ramda/0.25.0/ramda.min.js"></script>
+<script src="/assets/guitar_tuner/dsp.js"></script>
+<script src="/assets/guitar_tuner/simple_tuner.js"></script>
+<script src="/assets/guitar_tuner/hps_tuner.js"></script>
+<script>
+  // var mediaStream;
+  // var streamRunning = false;
+  // var canvas = document.querySelector("#canCtxSimple");
+  // var canvasCtx = canvas.getContext("2d");
+  // var WIDTH = canvas.width;
+  // var HEIGHT = canvas.height;
+  // canvasCtx.fillStyle = '#a8b2bf';
+  // canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+  // canvasCtx.strokeStyle = 'rgb(0, 0, 0)';
+  // canvasCtx.fillStyle = 'rgb(0, 0, 0)';
+  // canvasCtx.font = "30px Arial";
+  // canvasCtx.textAlign = "center";
+  // canvasCtx.fillText("Click here to start the simple tuner", WIDTH*0.5, HEIGHT*0.5);
+</script>
+
+
+  </div><a class="u-url" href="/digital/signal/processing/2020/05/13/guitar-tuner.html" hidden></a>
+</article>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">chciken</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">chciken</li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/not-chciken"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#github"></use></svg> <span class="username">not-chciken</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>This my website :)</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="author" content="Alex Ellis">
+		
+		<meta name="generator" content="Hugo 0.99.1" />
+		<title>Detecting pitch of Guitar</title>
+		<link rel="shortcut icon" href="favicon.ico">
+		<link rel="stylesheet" href="style.css">
+		<link rel="stylesheet" href="highlight.css">
+
+    </head>
+
+    <body>
+
+     <section id="wrapper">
+            <article class="post">
+                <header>
+                    <h1>
+                        Detecting pitch 
+                    </h1>
+                 </header>    
+      <section id="post-body">     
+
+  <p><canvas class="visualizer" width="640" height="100"></canvas>
+<br>
+<button id="init" onClick="init()">Start</button></p>
+<h1 id="note">Press start to begin</h1>
+<legend>Rounding options:</legend>
+<div>
+  <input type="radio" id="roundingNone" name="rounding" value="none" >
+  <label for="roundingNone">No rounding</label>
+  <br>
+  <input type="radio" id="roundingMedium" name="rounding" value="hz" checked>
+  <label for="roundingMedium">Round to nearest Hz</label>
+  <br>
+  <input type="radio" id="roundingHard" name="rounding" value="note">
+  <label for="roundingHard">Round to nearest note</label>
+  <br>
+</div>
+<br>
+<legend>Smoothing options:</legend>
+<div>
+  <input type="radio" id="smoothingNone" name="smoothing" value="none">
+  <label for="smoothingNone">No smoothing</label>
+  <br>
+  <input type="radio" id="smoothingMedium" name="smoothing" value="basic" checked>
+  <label for="smoothingMedium">Basic smoothing</label>
+  <br>
+  <input type="radio" id="smoothingHard" name="smoothing" value="very">
+  <label for="smoothingHard">Very smoothed (note must be more consistent and held for longer)</label>
+  <br>
+</div>
+<br>
+<legend>Display (click Start after you switch):</legend>
+<div>
+  <input type="radio" id="displaySine" name="display" value="sine" checked>
+  <label for="displaySine">Sine wave</label>
+  <br>
+  <input type="radio" id="displayFrequency" name="display" value="frequency" >
+  <label for="displayFrequency">Frequency</label>
+  <br>
+</div>
+<br>        
+
+<hr>
+
+<script src="tuner.js"></script>
+                </section>
+            </article>
+
+              </body>
+</html>
+  
